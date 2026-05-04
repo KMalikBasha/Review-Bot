@@ -315,6 +315,7 @@ async function processEmployeeForCycle(cycle, empRow, sentThisPass = new Set()) 
     const k = key(target);
     if (!k) return;
     if (sentThisPass.has(k)) return;
+    if (await wasRecentlyNudged(cycleId, empRow.id, 'employee', empInt)) return;
     const result = await sendTo(target, nudgeMessage('employee', cycleName, empRow.name));
     await logNudge(cycleId, empRow.id, 'employee', result);
     if (result.ok) sentThisPass.add(k);
@@ -330,6 +331,7 @@ async function processEmployeeForCycle(cycle, empRow, sentThisPass = new Set()) 
     const k = key(target);
     if (!k) return;
     if (sentThisPass.has(k)) return;
+    if (await wasRecentlyNudged(cycleId, empRow.id, 'delivery_head', dhInt)) return;
     const result = await sendTo(target, nudgeMessage('delivery_head', cycleName, empRow.name));
     await logNudge(cycleId, empRow.id, 'delivery_head', result);
     if (result.ok) sentThisPass.add(k);
@@ -348,6 +350,7 @@ async function processEmployeeForCycle(cycle, empRow, sentThisPass = new Set()) 
     const target = hrRows[0];
     const k = key(target);
     if (sentThisPass.has(k)) return;
+    if (await wasRecentlyNudged(cycleId, empRow.id, 'hr', cycle.manager_notify_interval_days)) return;
     const result = await sendTo(target, nudgeMessage('hr', cycleName, empRow.name));
     await logNudge(cycleId, empRow.id, 'hr', result);
     if (result.ok) sentThisPass.add(k);
@@ -527,7 +530,14 @@ async function nudgeForActivePeriod(cycle, emp, sentThisPass) {
   if (result.ok) sentThisPass.add(k);
 }
 
+let _nudgesRunning = false;
+
 async function runNudges() {
+  if (_nudgesRunning) {
+    console.log('[nudge] already running — skipping overlapping pass');
+    return;
+  }
+  _nudgesRunning = true;
   console.log('[nudge] running scheduler pass', new Date().toISOString());
   try {
     // Sync check-in period statuses first
@@ -605,6 +615,8 @@ async function runNudges() {
     }
   } catch (err) {
     console.error('[nudge] scheduler pass failed', err);
+  } finally {
+    _nudgesRunning = false;
   }
 }
 
