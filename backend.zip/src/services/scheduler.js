@@ -583,7 +583,7 @@ async function runNudges() {
         LEFT JOIN manager_feedback      mf ON mf.employee_id = e.id AND mf.review_cycle_id = $1
         LEFT JOIN delivery_head_reviews dh ON dh.employee_id = e.id AND dh.review_cycle_id = $1
         LEFT JOIN final_summaries       fs ON fs.employee_id = e.id AND fs.review_cycle_id = $1
-        WHERE e.role = 'employee' AND e.is_active = TRUE
+        WHERE e.is_active = TRUE
         `,
         [cycle.id]
       );

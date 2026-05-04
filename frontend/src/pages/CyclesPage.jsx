@@ -62,7 +62,7 @@ function AssignDialog({ cycle, onClose }) {
   const load = async () => {
     const [asgn, emps, active] = await Promise.all([
       api.listAssignments(cycle.id),
-      api.listEmployees({ role: 'employee' }),
+      api.listEmployees(),
       api.listActiveAssignments(),
     ]);
     setAssignments(asgn);
@@ -102,15 +102,16 @@ function AssignDialog({ cycle, onClose }) {
 
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Assign Employees — {cycle.name}</DialogTitle>
+      <DialogTitle>Assign to Cycle — {cycle.name}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
 
           <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
-            Each employee belongs to <strong>one review cycle at a time</strong> (the full year).
-            The check-in type you set on the cycle (sprint, monthly, etc.) defines how often
-            they check in within that year. Employees in another active cycle appear grayed out.
+            Any persona (employee, manager, DD, HR) can be assigned. Each person belongs to{' '}
+            <strong>one active cycle at a time</strong>. A manager's appraiser is whoever
+            is set as their <em>Manager</em> in the system (e.g. their DD). People already
+            in another active cycle appear grayed out.
           </Alert>
 
           {/* Add employee */}
@@ -125,11 +126,14 @@ function AssignDialog({ cycle, onClose }) {
                 {notInThisCycle.map(e => {
                   const takenBy = activeMap[e.id];
                   return (
-                    <MenuItem key={e.id} value={e.id} disabled={!!takenBy}>
+                    <MenuItem key={e.id} value={e.id} disabled={!!takenBy}
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       {e.name}
+                      <Chip size="small" label={e.role} variant="outlined"
+                        sx={{ fontSize: 10, height: 18, pointerEvents: 'none' }} />
                       {takenBy && (
-                        <Typography variant="caption" sx={{ ml: 1, color: 'text.disabled' }}>
-                          (in {takenBy})
+                        <Typography variant="caption" sx={{ ml: 'auto', color: 'text.disabled' }}>
+                          in {takenBy}
                         </Typography>
                       )}
                     </MenuItem>

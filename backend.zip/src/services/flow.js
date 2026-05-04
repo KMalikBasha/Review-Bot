@@ -84,17 +84,15 @@ async function findPendingWork(user) {
   if (!cycles.length) return null;
   const cycle = cycles[0];
 
-  if (user.role === 'employee') {
-    // Only proceed if this employee is assigned to the cycle
-    const { rows: assigned } = await db.query(
-      `SELECT 1 FROM employee_cycle_assignments
-       WHERE employee_id = $1 AND review_cycle_id = $2`,
-      [user.id, cycle.id]
-    );
-    if (!assigned.length) return null;
-
-    // does the user still have unanswered questions?
-    const { rows: pending } = await db.query(
+  // ── Step 1: Own self-review (ANY role, if assigned to this cycle) ──────────
+  // Self-review always takes priority over reviewing others.
+  const { rows: assigned } = await db.query(
+    `SELECT 1 FROM employee_cycle_assignments
+     WHERE employee_id = $1 AND review_cycle_id = $2`,
+    [user.id, cycle.id]
+  );
+  if (assigned.length) {
+    const { rows: progress } = await db.query(
       `SELECT COUNT(*) FILTER (WHERE q.is_active) AS total,
               COUNT(r.id) AS answered
          FROM questionnaires q
@@ -105,55 +103,75 @@ async function findPendingWork(user) {
         WHERE q.category_id = $3 AND q.is_active = TRUE`,
       [user.id, cycle.id, user.category_id]
     );
-    const { total, answered } = pending[0];
-    if (+answered >= +total) return null;
-    return { cycle, role: 'employee', targetEmployees: [user] };
+    const { total, answered } = progress[0];
+    if (+answered < +total) {
+      return { cycle, role: 'employee', targetEmployees: [user] };
+    }
   }
 
-  if (user.role === 'manager') {
-    // employees who've finished responses but manager hasn't submitted feedback
-    const { rows } = await db.query(
-      `SELECT e.*, c.name AS category_name FROM employees e
-         LEFT JOIN employee_categories c ON c.id = e.category_id
-        WHERE e.manager_id = $1 AND e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (
-            SELECT 1 FROM employee_responses r WHERE r.employee_id = e.id AND r.review_cycle_id = $2
-            GROUP BY r.employee_id
-            HAVING COUNT(*) >= (SELECT COUNT(*) FROM questionnaires q WHERE q.category_id = e.category_id AND q.is_active = TRUE)
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM manager_feedback mf WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2
-          )`,
-      [user.id, cycle.id]
-    );
-    if (!rows.length) return null;
-    return { cycle, role: 'manager', targetEmployees: rows };
+  // ── Step 2: Appraiser review — anyone whose manager_id = this user ─────────
+  // Works for any role: a DD whose id is set as manager_id for a manager-level
+  // person will see that person here, acting as their appraiser.
+  const { rows: directReports } = await db.query(
+    `SELECT e.*, c.name AS category_name FROM employees e
+       LEFT JOIN employee_categories c ON c.id = e.category_id
+      WHERE e.manager_id = $1 AND e.is_active = TRUE
+        AND EXISTS (
+          SELECT 1 FROM employee_responses r
+           WHERE r.employee_id = e.id AND r.review_cycle_id = $2
+           GROUP BY r.employee_id
+           HAVING COUNT(*) >= (
+             SELECT COUNT(*) FROM questionnaires q
+              WHERE q.category_id = e.category_id AND q.is_active = TRUE
+           )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM manager_feedback mf
+           WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2
+        )`,
+    [user.id, cycle.id]
+  );
+  if (directReports.length) {
+    return { cycle, role: 'manager', targetEmployees: directReports };
   }
 
+  // ── Step 3: Delivery-head review — people with delivery_head_id = this user ─
+  // Only runs after their manager feedback is in. Any role can be reviewed here.
   if (user.role === 'delivery_head') {
     const { rows } = await db.query(
       `SELECT e.*, c.name AS category_name FROM employees e
          LEFT JOIN employee_categories c ON c.id = e.category_id
-        WHERE e.delivery_head_id = $1 AND e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (SELECT 1 FROM manager_feedback mf WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2)
-          AND NOT EXISTS (SELECT 1 FROM delivery_head_reviews dh WHERE dh.employee_id = e.id AND dh.review_cycle_id = $2)`,
+        WHERE e.delivery_head_id = $1 AND e.is_active = TRUE
+          AND EXISTS (
+            SELECT 1 FROM manager_feedback mf
+             WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM delivery_head_reviews dh
+             WHERE dh.employee_id = e.id AND dh.review_cycle_id = $2
+          )`,
       [user.id, cycle.id]
     );
-    if (!rows.length) return null;
-    return { cycle, role: 'delivery_head', targetEmployees: rows };
+    if (rows.length) return { cycle, role: 'delivery_head', targetEmployees: rows };
   }
 
+  // ── Step 4: HR final summary — anyone with DH review done ─────────────────
   if (user.role === 'hr') {
     const { rows } = await db.query(
       `SELECT e.*, c.name AS category_name FROM employees e
          LEFT JOIN employee_categories c ON c.id = e.category_id
-        WHERE e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (SELECT 1 FROM delivery_head_reviews dh WHERE dh.employee_id = e.id AND dh.review_cycle_id = $1)
-          AND NOT EXISTS (SELECT 1 FROM final_summaries fs WHERE fs.employee_id = e.id AND fs.review_cycle_id = $1)`,
+        WHERE e.is_active = TRUE
+          AND EXISTS (
+            SELECT 1 FROM delivery_head_reviews dh
+             WHERE dh.employee_id = e.id AND dh.review_cycle_id = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM final_summaries fs
+             WHERE fs.employee_id = e.id AND fs.review_cycle_id = $1
+          )`,
       [cycle.id]
     );
-    if (!rows.length) return null;
-    return { cycle, role: 'hr', targetEmployees: rows };
+    if (rows.length) return { cycle, role: 'hr', targetEmployees: rows };
   }
 
   return null;
