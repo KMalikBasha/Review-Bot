@@ -10,6 +10,7 @@ const cyclesRouter         = require('./routes/cycles');
 const reviewsRouter        = require('./routes/reviews');
 const checkinsRouter       = require('./routes/checkins');
 const quarterlyRouter      = require('./routes/quarterly');
+const assignmentsRouter    = require('./routes/assignments');
 
 // Teams bot
 const { adapter } = require('./bot/adapter');
@@ -48,6 +49,7 @@ app.use('/api/cycles',         cyclesRouter);
 app.use('/api/reviews',        reviewsRouter);
 app.use('/api/checkins',       checkinsRouter);
 app.use('/api/quarterly',      quarterlyRouter);
+app.use('/api/assignments',    assignmentsRouter);
 
 // --- Teams bot endpoint ---
 app.post('/api/messages', (req, res) => {

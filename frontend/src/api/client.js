@@ -38,4 +38,9 @@ export const api = {
   listQuarterlyReviews: (cycleId)               => client.get(`/quarterly/cycle/${cycleId}`).then(r => r.data),
   getQuarterlyReview:   (id)                    => client.get(`/quarterly/${id}`).then(r => r.data),
   updateQuarterlyReview:(id, payload)           => client.put(`/quarterly/${id}`, payload).then(r => r.data),
+
+  // Cycle assignments
+  listAssignments:  (cycleId)              => client.get(`/assignments/cycle/${cycleId}`).then(r => r.data),
+  createAssignment: (payload)              => client.post('/assignments', payload).then(r => r.data),
+  deleteAssignment: (id)                   => client.delete(`/assignments/${id}`).then(r => r.data),
 };

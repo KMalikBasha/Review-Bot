@@ -1,5 +1,13 @@
 const db = require('../db');
 const ai = require('./ai');
+const { sendSlackProactiveMessage } = require('../slack/proactive');
+const { sendProactiveMessage }      = require('../bot/proactive');
+
+async function sendTo(user, msg) {
+  if (user.slack_user_id) return sendSlackProactiveMessage(user.slack_user_id, msg);
+  if (user.teams_user_id) return sendProactiveMessage(user.teams_user_id, msg);
+  return { ok: false, reason: 'no_messaging_id' };
+}
 
 /**
  * Flow service — channel-agnostic state machine that drives the
@@ -77,6 +85,14 @@ async function findPendingWork(user) {
   const cycle = cycles[0];
 
   if (user.role === 'employee') {
+    // Only proceed if this employee is assigned to the cycle
+    const { rows: assigned } = await db.query(
+      `SELECT 1 FROM employee_cycle_assignments
+       WHERE employee_id = $1 AND review_cycle_id = $2`,
+      [user.id, cycle.id]
+    );
+    if (!assigned.length) return null;
+
     // does the user still have unanswered questions?
     const { rows: pending } = await db.query(
       `SELECT COUNT(*) FILTER (WHERE q.is_active) AS total,
@@ -392,7 +408,14 @@ async function continueFlow(session, user, channel, text) {
         );
       }
       await deleteSession(session.id);
-      return { messages: ['✅ Thanks! All your responses are recorded. Your manager will be notified next.'] };
+
+      // Immediately generate a quarterly summary and notify the manager now that
+      // the self-review is complete — do NOT wait for the nightly scheduler.
+      notifyManagerAfterSelfReview(user.id, session.review_cycle_id).catch(err =>
+        console.error('[flow] manager notification failed', err.message)
+      );
+
+      return { messages: ['✅ Thanks! All your responses are recorded. Your manager will receive a summary shortly.'] };
     }
   }
 
@@ -546,6 +569,67 @@ async function loadEmployee(id) {
     [id]
   );
   return rows[0];
+}
+
+// ---------- post-self-review manager notification ----------
+
+/**
+ * Called immediately after an employee finishes their self-review.
+ * Generates an AI summary of their responses and sends it to their manager.
+ * This replaces the scheduler-based notification for assigned employees.
+ */
+async function notifyManagerAfterSelfReview(employeeId, cycleId) {
+  const emp = await loadEmployee(employeeId);
+  if (!emp || !emp.manager_id) return;
+
+  const cycle = await loadCycle(cycleId);
+  const responses = await loadEmployeeResponses(employeeId, cycleId);
+  if (!responses.length) return;
+
+  const summary = await ai.summarizeEmployeeResponses(emp, responses);
+
+  // Load manager messaging IDs
+  const { rows: mgrRows } = await db.query(
+    `SELECT id, name, slack_user_id, teams_user_id FROM employees WHERE id = $1`,
+    [emp.manager_id]
+  );
+  const mgr = mgrRows[0];
+  if (!mgr || (!mgr.slack_user_id && !mgr.teams_user_id)) return;
+
+  const msg = {
+    text: `${emp.name} has completed their self-review for ${cycle.name}.`,
+    blocks: [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: '📊 Self-Review Completed', emoji: true },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${emp.name}* has completed their self-review for *${cycle.name}*.\n\n*AI Summary of their responses:*`,
+        },
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: summary },
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Submit Feedback', emoji: true },
+            style: 'primary',
+            action_id: 'start_appraisal',
+          },
+        ],
+      },
+    ],
+  };
+
+  await sendTo(mgr, msg);
+  console.log(`[flow] manager ${mgr.name} notified after ${emp.name} completed self-review`);
 }
 
 module.exports = { handleIncoming };

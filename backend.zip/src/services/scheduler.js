@@ -388,12 +388,14 @@ async function generateQuarterlyReviews() {
 
   const { rows: cycles } = await db.query(`SELECT * FROM review_cycles WHERE status = 'active'`);
   for (const cycle of cycles) {
-    // Employees with at least one check-in in this cycle
+    // Only employees assigned to this cycle
     const { rows: employees } = await db.query(
       `SELECT DISTINCT e.id, e.name, m.id AS manager_id, m.slack_user_id AS manager_slack_id, m.teams_user_id AS manager_teams_id
        FROM employees e
+       JOIN employee_cycle_assignments eca ON eca.employee_id = e.id AND eca.review_cycle_id = $1
        LEFT JOIN employees m ON m.id = e.manager_id
-       WHERE e.role = 'employee' AND e.is_active = TRUE`
+       WHERE e.role = 'employee' AND e.is_active = TRUE`,
+      [cycle.id]
     );
 
     for (const quarter of quarters) {
@@ -571,6 +573,9 @@ async function runNudges() {
           CASE WHEN dh.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS delivery_head_status,
           CASE WHEN fs.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS hr_status
         FROM employees e
+        -- Only include employees explicitly assigned to this cycle
+        JOIN employee_cycle_assignments eca
+          ON eca.employee_id = e.id AND eca.review_cycle_id = $1
         LEFT JOIN employees m           ON m.id = e.manager_id
         LEFT JOIN employees d           ON d.id = e.delivery_head_id
         LEFT JOIN emp_resp er           ON er.employee_id = e.id

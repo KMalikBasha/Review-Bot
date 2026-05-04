@@ -3,9 +3,12 @@ import {
   Typography, Button, Table, TableHead, TableRow, TableCell, TableBody,
   IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Paper, Stack, Alert, MenuItem, Select, InputLabel, FormControl, Chip,
+  List, ListItem, ListItemText, ListItemSecondaryAction, Divider, CircularProgress,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
+import PeopleIcon from '@mui/icons-material/People';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { api } from '../api/client';
 
 const statusColor = {
@@ -36,12 +39,138 @@ const emptyForm = {
   status: 'draft',
 };
 
+// ── Assign Employees dialog ───────────────────────────────────────────────────
+function AssignDialog({ cycle, onClose }) {
+  const [assignments, setAssignments] = useState([]);
+  const [allEmployees, setAllEmployees] = useState([]);
+  const [selectedEmp, setSelectedEmp] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    const [asgn, emps] = await Promise.all([
+      api.listAssignments(cycle.id),
+      api.listEmployees({ role: 'employee' }),
+    ]);
+    setAssignments(asgn);
+    setAllEmployees(emps);
+  };
+
+  useEffect(() => { load(); }, [cycle.id]);
+
+  const assignedIds = new Set(assignments.map(a => a.employee_id));
+  const unassigned = allEmployees.filter(e => !assignedIds.has(e.id));
+
+  const assign = async () => {
+    if (!selectedEmp) return;
+    setSaving(true);
+    try {
+      await api.createAssignment({ employee_id: selectedEmp, review_cycle_id: cycle.id });
+      setSelectedEmp('');
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || e.message);
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (id) => {
+    try {
+      await api.deleteAssignment(id);
+      await load();
+    } catch (e) { setError(e.response?.data?.error || e.message); }
+  };
+
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Assign Employees — {cycle.name}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+
+          <Typography variant="body2" color="text.secondary">
+            Assigned employees will immediately receive a bot prompt to complete their self-review.
+            Their manager is notified as soon as the self-review is submitted.
+          </Typography>
+
+          {/* Add employee */}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FormControl fullWidth size="small">
+              <InputLabel>Select employee</InputLabel>
+              <Select
+                label="Select employee"
+                value={selectedEmp}
+                onChange={e => setSelectedEmp(e.target.value)}
+              >
+                {unassigned.map(e => (
+                  <MenuItem key={e.id} value={e.id}>{e.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button
+              variant="contained" onClick={assign}
+              disabled={!selectedEmp || saving}
+              startIcon={saving ? <CircularProgress size={16} /> : <AddIcon />}
+              sx={{ whiteSpace: 'nowrap' }}
+            >
+              Assign
+            </Button>
+          </Stack>
+
+          <Divider />
+
+          {/* Current assignments */}
+          {assignments.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+              No employees assigned yet.
+            </Typography>
+          ) : (
+            <List dense disablePadding>
+              {assignments.map(a => (
+                <ListItem key={a.id} disablePadding sx={{ py: 0.5 }}>
+                  <ListItemText
+                    primary={a.employee_name}
+                    secondary={
+                      a.prompt_sent
+                        ? 'Prompt sent'
+                        : 'Pending prompt'
+                    }
+                    secondaryTypographyProps={{
+                      color: a.prompt_sent ? 'success.main' : 'text.secondary',
+                      variant: 'caption',
+                    }}
+                  />
+                  <ListItemSecondaryAction>
+                    <Chip
+                      size="small"
+                      label={a.prompt_sent ? 'Notified' : 'Not notified'}
+                      color={a.prompt_sent ? 'success' : 'default'}
+                      variant="outlined"
+                      sx={{ mr: 1 }}
+                    />
+                    <IconButton edge="end" size="small" onClick={() => remove(a.id)}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </ListItemSecondaryAction>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 export default function CyclesPage() {
-  const [rows, setRows]       = useState([]);
-  const [open, setOpen]       = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm]       = useState(emptyForm);
-  const [error, setError]     = useState('');
+  const [rows, setRows]             = useState([]);
+  const [open, setOpen]             = useState(false);
+  const [editing, setEditing]       = useState(null);
+  const [form, setForm]             = useState(emptyForm);
+  const [error, setError]           = useState('');
+  const [assigningCycle, setAssigningCycle] = useState(null);
 
   const load = async () => {
     try { setRows(await api.listCycles()); }
@@ -121,6 +250,9 @@ export default function CyclesPage() {
                   <Chip size="small" label={r.status} color={statusColor[r.status]} />
                 </TableCell>
                 <TableCell align="right">
+                  <IconButton title="Assign employees" onClick={() => setAssigningCycle(r)}>
+                    <PeopleIcon />
+                  </IconButton>
                   <IconButton onClick={() => openEdit(r)}><EditIcon /></IconButton>
                 </TableCell>
               </TableRow>
@@ -128,6 +260,10 @@ export default function CyclesPage() {
           </TableBody>
         </Table>
       </Paper>
+
+      {assigningCycle && (
+        <AssignDialog cycle={assigningCycle} onClose={() => setAssigningCycle(null)} />
+      )}
 
       <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>{editing ? 'Edit Cycle' : 'New Review Cycle'}</DialogTitle>
