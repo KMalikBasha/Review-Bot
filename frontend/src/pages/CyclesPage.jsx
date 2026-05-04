@@ -28,16 +28,27 @@ const CHECKIN_TYPE_OPTIONS = [
 
 const checkinTypeLabel = (v) => CHECKIN_TYPE_OPTIONS.find(o => o.value === v)?.label || v;
 
-const emptyForm = {
+// Fiscal year: April 1 → March 31 of the following year.
+// If we are already past April 1 this calendar year, the current FY started this year.
+// Otherwise it started last year.
+function fiscalYearDefaults() {
+  const today = new Date();
+  const fyStart = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  return {
+    start_date: `${fyStart}-04-01`,
+    end_date:   `${fyStart + 1}-03-31`,
+  };
+}
+
+const emptyForm = () => ({
   name: '',
-  start_date: '',
-  end_date: '',
+  ...fiscalYearDefaults(),
   checkin_type: 'quarterly',
   employee_notify_interval_days: 7,
   manager_notify_interval_days: 7,
   delivery_head_notify_interval_days: 7,
   status: 'draft',
-};
+});
 
 // ── Assign Employees dialog ───────────────────────────────────────────────────
 function AssignDialog({ cycle, onClose }) {
@@ -199,7 +210,7 @@ export default function CyclesPage() {
 
   useEffect(() => { load(); }, []);
 
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
+  const openCreate = () => { setEditing(null); setForm(emptyForm()); setOpen(true); };
   const openEdit   = (row) => {
     setEditing(row);
     setForm({
@@ -226,12 +237,10 @@ export default function CyclesPage() {
   const f = (k, v) => {
     setForm(prev => {
       const next = { ...prev, [k]: v };
-      // Auto-fill end date as start + 1 year when start date is set and end is empty
-      if (k === 'start_date' && v && !prev.end_date) {
-        const d = new Date(v);
-        d.setFullYear(d.getFullYear() + 1);
-        d.setDate(d.getDate() - 1);          // Dec 31 of the following year
-        next.end_date = d.toISOString().slice(0, 10);
+      // Fiscal year always ends March 31 of (start year + 1)
+      if (k === 'start_date' && v) {
+        const startYear = new Date(v).getFullYear();
+        next.end_date = `${startYear + 1}-03-31`;
       }
       return next;
     });
@@ -337,10 +346,10 @@ export default function CyclesPage() {
             </Stack>
 
             <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
-              A review cycle spans <strong>one full year</strong> (end date auto-filled as start + 1 year).
-              The <strong>Check-In Type</strong> above defines the cadence of check-ins within that year —
-              e.g. Monthly = 12 check-in periods, Per Sprint = 26. Check-in periods are auto-generated
-              when the cycle is set to Active.
+              Fiscal year runs <strong>1 April → 31 March</strong> of the following year. End date is
+              auto-filled when you set the start date. The <strong>Check-In Type</strong> defines the
+              cadence within that year — e.g. Monthly = 12 periods, Per Sprint = 26. Periods are
+              auto-generated when the cycle is set to Active.
             </Typography>
 
             <Stack direction="row" spacing={2}>
