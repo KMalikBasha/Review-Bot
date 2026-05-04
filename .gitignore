@@ -1,0 +1,15 @@
+# Claude Code local config
+.claude/
+
+# Env files (secrets)
+.env
+*.env
+.env.*
+
+# Logs
+*.log
+logs/
+
+# OS noise
+.DS_Store
+Thumbs.db

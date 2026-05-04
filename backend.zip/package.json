@@ -1,0 +1,19 @@
+{
+  "name": "appraisal-bot-backend",
+  "version": "0.1.0",
+  "description": "Backend API + Teams bot + Slack bot for the Appraisal Bot",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.22.0",
+    "botbuilder": "^4.23.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "pg": "^8.13.1"
+  }
+}
