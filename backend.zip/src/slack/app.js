@@ -71,64 +71,10 @@ async function pickActiveRole(slackUserId) {
 
 /**
  * Lightweight check — does this user have anything to do in the active cycle?
+ * Delegates to findPendingWork so the two stay in sync.
  */
 async function hasPendingWork(user) {
-  const { rows: cycles } = await db.query(
-    `SELECT id FROM review_cycles WHERE status='active' ORDER BY id DESC LIMIT 1`
-  );
-  if (!cycles.length) return false;
-  const cycleId = cycles[0].id;
-
-  if (user.role === 'employee') {
-    const { rows } = await db.query(
-      `SELECT (SELECT COUNT(*) FROM questionnaires q
-                WHERE q.category_id = $1 AND q.is_active = TRUE) AS total,
-              (SELECT COUNT(*) FROM employee_responses r
-                WHERE r.employee_id = $2 AND r.review_cycle_id = $3) AS answered`,
-      [user.category_id, user.id, cycleId]
-    );
-    return +rows[0].answered < +rows[0].total;
-  }
-  if (user.role === 'manager') {
-    const { rows } = await db.query(
-      `SELECT 1 FROM employees e
-        WHERE e.manager_id = $1 AND e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (
-            SELECT 1 FROM employee_responses r
-             WHERE r.employee_id = e.id AND r.review_cycle_id = $2
-             GROUP BY r.employee_id
-            HAVING COUNT(*) >= (SELECT COUNT(*) FROM questionnaires q
-                                 WHERE q.category_id = e.category_id AND q.is_active = TRUE))
-          AND NOT EXISTS (SELECT 1 FROM manager_feedback mf
-                           WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2)
-        LIMIT 1`,
-      [user.id, cycleId]
-    );
-    return rows.length > 0;
-  }
-  if (user.role === 'delivery_head') {
-    const { rows } = await db.query(
-      `SELECT 1 FROM employees e
-        WHERE e.delivery_head_id = $1 AND e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (SELECT 1 FROM manager_feedback mf WHERE mf.employee_id = e.id AND mf.review_cycle_id = $2)
-          AND NOT EXISTS (SELECT 1 FROM delivery_head_reviews dh WHERE dh.employee_id = e.id AND dh.review_cycle_id = $2)
-        LIMIT 1`,
-      [user.id, cycleId]
-    );
-    return rows.length > 0;
-  }
-  if (user.role === 'hr') {
-    const { rows } = await db.query(
-      `SELECT 1 FROM employees e
-        WHERE e.role = 'employee' AND e.is_active = TRUE
-          AND EXISTS (SELECT 1 FROM delivery_head_reviews dh WHERE dh.employee_id = e.id AND dh.review_cycle_id = $1)
-          AND NOT EXISTS (SELECT 1 FROM final_summaries fs WHERE fs.employee_id = e.id AND fs.review_cycle_id = $1)
-        LIMIT 1`,
-      [cycleId]
-    );
-    return rows.length > 0;
-  }
-  return false;
+  return (await flow.findPendingWork(user)) !== null;
 }
 
 function helpText() {

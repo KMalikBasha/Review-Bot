@@ -209,9 +209,9 @@ async function startFlow(user, channel) {
     return { messages: ['You have no pending appraisal tasks right now. 🎉'] };
   }
 
-  if (user.role === 'employee') {
-    // single target (self). Ask mode preference.
-    const session = await upsertSession({
+  if (work.role === 'employee') {
+    // Self-review flow — applies to ANY assigned persona, not just role='employee'
+    await upsertSession({
       employee_id: user.id,
       role: 'employee',
       review_cycle_id: work.cycle.id,
@@ -222,13 +222,13 @@ async function startFlow(user, channel) {
     });
     return {
       messages: [
-        `Let's complete your questionnaire for *${work.cycle.name}*.`,
+        `Let's complete your self-review for *${work.cycle.name}*.`,
         'Would you like me to ask you *one question at a time*, or show *all questions at once*?\nReply with *one* or *all*.',
       ],
     };
   }
 
-  // manager / delivery_head / hr: may have multiple employees to review
+  // reviewing others (manager / delivery_head / hr)
   if (work.targetEmployees.length === 1) {
     return beginPerEmployeeFlow(user, channel, work.cycle, work.role, work.targetEmployees[0]);
   }
@@ -650,4 +650,4 @@ async function notifyManagerAfterSelfReview(employeeId, cycleId) {
   console.log(`[flow] manager ${mgr.name} notified after ${emp.name} completed self-review`);
 }
 
-module.exports = { handleIncoming };
+module.exports = { handleIncoming, findPendingWork };
