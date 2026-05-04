@@ -28,12 +28,43 @@ router.get('/cycle/:cycleId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /api/assignments/active — map of employee_id → current active cycle for the whole org
+router.get('/active', async (req, res, next) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT a.employee_id, rc.id AS cycle_id, rc.name AS cycle_name
+       FROM employee_cycle_assignments a
+       JOIN review_cycles rc ON rc.id = a.review_cycle_id
+       WHERE rc.status IN ('draft', 'active')`
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 // POST /api/assignments — assign an employee to a cycle and send them a bot prompt
 router.post('/', async (req, res, next) => {
   try {
     const { employee_id, review_cycle_id, assigned_by } = req.body;
     if (!employee_id || !review_cycle_id)
       return res.status(400).json({ error: 'employee_id and review_cycle_id required' });
+
+    // Block if employee is already assigned to a different active/draft cycle.
+    // Each employee may only belong to one review cycle at a time.
+    const { rows: conflict } = await db.query(
+      `SELECT rc.name AS cycle_name
+       FROM employee_cycle_assignments a
+       JOIN review_cycles rc ON rc.id = a.review_cycle_id
+       WHERE a.employee_id = $1
+         AND rc.status IN ('draft', 'active')
+         AND rc.id != $2
+       LIMIT 1`,
+      [employee_id, review_cycle_id]
+    );
+    if (conflict.length) {
+      return res.status(409).json({
+        error: `This employee is already assigned to the "${conflict[0].cycle_name}" review cycle. Remove them from that cycle first.`,
+      });
+    }
 
     // Upsert so re-assigning the same employee is idempotent
     const { rows } = await db.query(

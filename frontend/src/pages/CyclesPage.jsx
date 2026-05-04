@@ -41,25 +41,34 @@ const emptyForm = {
 
 // ── Assign Employees dialog ───────────────────────────────────────────────────
 function AssignDialog({ cycle, onClose }) {
-  const [assignments, setAssignments] = useState([]);
+  const [assignments, setAssignments]   = useState([]);
   const [allEmployees, setAllEmployees] = useState([]);
-  const [selectedEmp, setSelectedEmp] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [activeMap, setActiveMap]       = useState({});   // employee_id → cycle_name
+  const [selectedEmp, setSelectedEmp]   = useState('');
+  const [saving, setSaving]             = useState(false);
+  const [error, setError]               = useState('');
 
   const load = async () => {
-    const [asgn, emps] = await Promise.all([
+    const [asgn, emps, active] = await Promise.all([
       api.listAssignments(cycle.id),
       api.listEmployees({ role: 'employee' }),
+      api.listActiveAssignments(),
     ]);
     setAssignments(asgn);
     setAllEmployees(emps);
+    // Build map: employee_id → cycle_name for employees in OTHER active cycles
+    const map = {};
+    for (const a of active) {
+      if (a.cycle_id !== cycle.id) map[a.employee_id] = a.cycle_name;
+    }
+    setActiveMap(map);
   };
 
   useEffect(() => { load(); }, [cycle.id]);
 
-  const assignedIds = new Set(assignments.map(a => a.employee_id));
-  const unassigned = allEmployees.filter(e => !assignedIds.has(e.id));
+  const assignedIds   = new Set(assignments.map(a => a.employee_id));
+  // Employees not yet in THIS cycle (include those in other cycles so we can show them grayed out)
+  const notInThisCycle = allEmployees.filter(e => !assignedIds.has(e.id));
 
   const assign = async () => {
     if (!selectedEmp) return;
@@ -87,10 +96,11 @@ function AssignDialog({ cycle, onClose }) {
         <Stack spacing={2} sx={{ mt: 1 }}>
           {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
 
-          <Typography variant="body2" color="text.secondary">
-            Assigned employees will immediately receive a bot prompt to complete their self-review.
-            Their manager is notified as soon as the self-review is submitted.
-          </Typography>
+          <Alert severity="info" icon={false} sx={{ py: 0.5 }}>
+            Each employee belongs to <strong>one review cycle at a time</strong> (the full year).
+            The check-in type you set on the cycle (sprint, monthly, etc.) defines how often
+            they check in within that year. Employees in another active cycle appear grayed out.
+          </Alert>
 
           {/* Add employee */}
           <Stack direction="row" spacing={1} alignItems="center">
@@ -101,9 +111,19 @@ function AssignDialog({ cycle, onClose }) {
                 value={selectedEmp}
                 onChange={e => setSelectedEmp(e.target.value)}
               >
-                {unassigned.map(e => (
-                  <MenuItem key={e.id} value={e.id}>{e.name}</MenuItem>
-                ))}
+                {notInThisCycle.map(e => {
+                  const takenBy = activeMap[e.id];
+                  return (
+                    <MenuItem key={e.id} value={e.id} disabled={!!takenBy}>
+                      {e.name}
+                      {takenBy && (
+                        <Typography variant="caption" sx={{ ml: 1, color: 'text.disabled' }}>
+                          (in {takenBy})
+                        </Typography>
+                      )}
+                    </MenuItem>
+                  );
+                })}
               </Select>
             </FormControl>
             <Button
@@ -203,7 +223,19 @@ export default function CyclesPage() {
     } catch (e) { setError(e.response?.data?.error || e.message); }
   };
 
-  const f = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const f = (k, v) => {
+    setForm(prev => {
+      const next = { ...prev, [k]: v };
+      // Auto-fill end date as start + 1 year when start date is set and end is empty
+      if (k === 'start_date' && v && !prev.end_date) {
+        const d = new Date(v);
+        d.setFullYear(d.getFullYear() + 1);
+        d.setDate(d.getDate() - 1);          // Dec 31 of the following year
+        next.end_date = d.toISOString().slice(0, 10);
+      }
+      return next;
+    });
+  };
 
   return (
     <Stack spacing={2}>
@@ -305,8 +337,10 @@ export default function CyclesPage() {
             </Stack>
 
             <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
-              Check-in periods are auto-generated from these dates when the cycle is set to Active.
-              Managers receive an auto-generated quarterly review at the end of each calendar quarter.
+              A review cycle spans <strong>one full year</strong> (end date auto-filled as start + 1 year).
+              The <strong>Check-In Type</strong> above defines the cadence of check-ins within that year —
+              e.g. Monthly = 12 check-in periods, Per Sprint = 26. Check-in periods are auto-generated
+              when the cycle is set to Active.
             </Typography>
 
             <Stack direction="row" spacing={2}>
