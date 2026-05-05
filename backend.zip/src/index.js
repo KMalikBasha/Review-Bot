@@ -62,6 +62,23 @@ app.post('/api/admin/run-nudges', async (_req, res, next) => {
   catch (e) { next(e); }
 });
 
+// Clear nudge log so a person can be re-nudged immediately (useful after resetting test data).
+// Body: { employee_id?, cycle_id?, stage? }  — all optional; omitting all clears everything.
+app.post('/api/admin/clear-nudge-log', async (req, res, next) => {
+  const db = require('./db');
+  try {
+    const { employee_id, cycle_id, stage } = req.body || {};
+    const conditions = [];
+    const params = [];
+    if (employee_id) { params.push(employee_id); conditions.push(`employee_id = $${params.length}`); }
+    if (cycle_id)    { params.push(cycle_id);    conditions.push(`review_cycle_id = $${params.length}`); }
+    if (stage)       { params.push(stage);       conditions.push(`stage = $${params.length}`); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await db.query(`DELETE FROM nudge_log ${where}`, params);
+    res.json({ ok: true, deleted: result.rowCount });
+  } catch (e) { next(e); }
+});
+
 app.post('/api/admin/send-teams-message', async (req, res, next) => {
   try {
     const { teams_user_id, text } = req.body;

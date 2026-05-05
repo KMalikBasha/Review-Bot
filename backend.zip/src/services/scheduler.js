@@ -551,7 +551,10 @@ async function runNudges() {
     );
     if (!cycles.length) { console.log('[nudge] no active cycles'); return; }
 
-    const sentThisPass = new Set();
+    // Separate dedup sets so a check-in nudge doesn't block a self-review/DH/HR nudge
+    // (different types of reminders should each get their own dedup pass)
+    const sentCheckinThisPass    = new Set();
+    const sentAppraisalThisPass  = new Set();
 
     for (const cycle of cycles) {
       const { rows: emps } = await db.query(
@@ -598,18 +601,18 @@ async function runNudges() {
         [cycle.id]
       );
 
-      // Nudge employees for active check-in period
+      // Nudge employees for active check-in period (own dedup set)
       for (const emp of emps) {
-        try { await nudgeForActivePeriod(cycle, emp, sentThisPass); }
+        try { await nudgeForActivePeriod(cycle, emp, sentCheckinThisPass); }
         catch (err) { console.error(`[nudge] checkin period nudge failed emp ${emp.id}`, err); }
       }
 
       // ONE digest card per manager
       await sendManagerDigests(cycle, emps);
 
-      // Individual nudges for employee / DH / HR stages
+      // Individual nudges for employee / DH / HR stages (own dedup set)
       for (const emp of emps) {
-        try { await processEmployeeForCycle(cycle, emp, sentThisPass); }
+        try { await processEmployeeForCycle(cycle, emp, sentAppraisalThisPass); }
         catch (err) { console.error(`[nudge] employee ${emp.id} failed`, err); }
       }
     }
