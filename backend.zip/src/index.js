@@ -79,6 +79,14 @@ app.post('/api/admin/clear-nudge-log', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+app.post('/api/admin/clear-sessions', async (_req, res, next) => {
+  const db = require('./db');
+  try {
+    const result = await db.query('DELETE FROM flow_sessions');
+    res.json({ ok: true, deleted: result.rowCount });
+  } catch (e) { next(e); }
+});
+
 app.post('/api/admin/send-teams-message', async (req, res, next) => {
   try {
     const { teams_user_id, text } = req.body;

@@ -40,7 +40,8 @@ function TeamDigestTable({ rows, cycleId, onRowClick }) {
       <Table>
         <TableHead>
           <TableRow>
-            <TableCell>Employee</TableCell>
+            <TableCell>Name</TableCell>
+            <TableCell>Role</TableCell>
             <TableCell>Category</TableCell>
             <TableCell>Manager</TableCell>
             <TableCell>Delivery Head</TableCell>
@@ -57,6 +58,10 @@ function TeamDigestTable({ rows, cycleId, onRowClick }) {
               onClick={() => onRowClick(r.id)}
             >
               <TableCell sx={{ fontWeight: 500 }}>{r.name}</TableCell>
+              <TableCell>
+                <Chip size="small" label={r.role} variant="outlined"
+                  color={r.role === 'employee' ? 'default' : r.role === 'manager' ? 'primary' : r.role === 'delivery_head' ? 'secondary' : 'warning'} />
+              </TableCell>
               <TableCell>{r.category_name || '—'}</TableCell>
               <TableCell>{r.manager_name || '—'}</TableCell>
               <TableCell>{r.delivery_head_name || '—'}</TableCell>
@@ -123,8 +128,8 @@ function CheckinPeriodsPanel({ cycleId }) {
               <TableRow key={p.id}>
                 <TableCell sx={{ color: 'text.secondary', width: 40 }}>{p.period_number}</TableCell>
                 <TableCell sx={{ fontWeight: 500 }}>{p.period_label}</TableCell>
-                <TableCell>{p.period_start}</TableCell>
-                <TableCell>{p.period_end}</TableCell>
+                <TableCell>{p.period_start ? new Date(p.period_start).toLocaleDateString('en-CA') : '—'}</TableCell>
+                <TableCell>{p.period_end   ? new Date(p.period_end).toLocaleDateString('en-CA')   : '—'}</TableCell>
                 <TableCell>
                   <Chip size="small" label={p.status} color={PERIOD_COLOR[p.status] || 'default'} />
                 </TableCell>

@@ -1,11 +1,18 @@
 const db = require('../db');
 const ai = require('./ai');
-const { sendSlackProactiveMessage } = require('../slack/proactive');
-const { sendProactiveMessage }      = require('../bot/proactive');
 
+// Lazy requires break the circular dependency:
+//   slack/app.js → flow.js → slack/proactive.js → slack/app.js
+// By deferring until call-time, all modules are fully loaded before use.
 async function sendTo(user, msg) {
-  if (user.slack_user_id) return sendSlackProactiveMessage(user.slack_user_id, msg);
-  if (user.teams_user_id) return sendProactiveMessage(user.teams_user_id, msg);
+  if (user.slack_user_id) {
+    const { sendSlackProactiveMessage } = require('../slack/proactive');
+    return sendSlackProactiveMessage(user.slack_user_id, msg);
+  }
+  if (user.teams_user_id) {
+    const { sendProactiveMessage } = require('../bot/proactive');
+    return sendProactiveMessage(user.teams_user_id, msg);
+  }
   return { ok: false, reason: 'no_messaging_id' };
 }
 
@@ -72,20 +79,25 @@ async function deleteSession(sessionId) {
 
 /**
  * Given the user's employee record, figure out what they need to do
- * in the currently active cycle. Returns:
- *   { cycleId, role, targetEmployees: [{id, name, ...}] }
+ * across ALL currently active cycles (oldest first). Returns:
+ *   { cycle, role, targetEmployees: [{id, name, ...}] }
  *   or null if nothing pending.
  */
 async function findPendingWork(user) {
-  // find active cycle(s) - assume one at a time for MVP
   const { rows: cycles } = await db.query(
-    `SELECT * FROM review_cycles WHERE status='active' ORDER BY id DESC LIMIT 1`
+    `SELECT * FROM review_cycles WHERE status='active' ORDER BY id ASC`
   );
   if (!cycles.length) return null;
-  const cycle = cycles[0];
 
+  for (const cycle of cycles) {
+    const work = await findPendingWorkInCycle(user, cycle);
+    if (work) return work;
+  }
+  return null;
+}
+
+async function findPendingWorkInCycle(user, cycle) {
   // ── Step 1: Own self-review (ANY role, if assigned to this cycle) ──────────
-  // Self-review always takes priority over reviewing others.
   const { rows: assigned } = await db.query(
     `SELECT 1 FROM employee_cycle_assignments
      WHERE employee_id = $1 AND review_cycle_id = $2`,
@@ -110,8 +122,6 @@ async function findPendingWork(user) {
   }
 
   // ── Step 2: Appraiser review — anyone whose manager_id = this user ─────────
-  // Works for any role: a DD whose id is set as manager_id for a manager-level
-  // person will see that person here, acting as their appraiser.
   const { rows: directReports } = await db.query(
     `SELECT e.*, c.name AS category_name FROM employees e
        LEFT JOIN employee_categories c ON c.id = e.category_id
@@ -135,8 +145,7 @@ async function findPendingWork(user) {
     return { cycle, role: 'manager', targetEmployees: directReports };
   }
 
-  // ── Step 3: Delivery-head review — people with delivery_head_id = this user ─
-  // Only runs after their manager feedback is in. Any role can be reviewed here.
+  // ── Step 3: Delivery-head review ──────────────────────────────────────────
   if (user.role === 'delivery_head') {
     const { rows } = await db.query(
       `SELECT e.*, c.name AS category_name FROM employees e
@@ -155,7 +164,7 @@ async function findPendingWork(user) {
     if (rows.length) return { cycle, role: 'delivery_head', targetEmployees: rows };
   }
 
-  // ── Step 4: HR final summary — anyone with DH review done ─────────────────
+  // ── Step 4: HR final summary ───────────────────────────────────────────────
   if (user.role === 'hr') {
     const { rows } = await db.query(
       `SELECT e.*, c.name AS category_name FROM employees e
@@ -190,12 +199,16 @@ async function handleIncoming({ user, channel }, rawText) {
     return { messages: ['Cancelled. Type *start* when you\'re ready to resume.'] };
   }
 
+  // 'start' always resets any in-progress session and begins fresh
+  if (lower === 'start') {
+    const stale = await getSession(user.id, channel);
+    if (stale) await deleteSession(stale.id);
+    return startFlow(user, channel);
+  }
+
   // Continue an existing session if any
   const existing = await getSession(user.id, channel);
   if (existing) return continueFlow(existing, user, channel, text);
-
-  // No session — start command or info
-  if (lower === 'start') return startFlow(user, channel);
 
   // Fallthrough = let caller handle (help/status/etc.)
   return null;

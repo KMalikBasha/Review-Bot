@@ -6,71 +6,78 @@ const CHECKIN_TYPES = ['per_sprint', 'monthly', 'quarterly', 'mid_year', 'yearly
 
 function buildPeriods(checkinType, startDate, endDate) {
   const periods = [];
-  const start = new Date(startDate);
-  const end   = new Date(endDate);
+  // Force UTC parsing so a "YYYY-MM-DD" string never shifts by the server timezone
+  const toUTC  = (s) => new Date(typeof s === 'string' && s.length === 10 ? s + 'T00:00:00Z' : s);
+  const start  = toUTC(startDate);
+  const end    = toUTC(endDate);
   let num = 1;
 
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  const clamp = (d) => d > end ? new Date(end) : d;
+  // Format as explicit UTC timestamp so PostgreSQL stores at midnight UTC, not midnight local
+  const fmt     = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}T00:00:00Z`;
+  const utc     = (y, m, d) => new Date(Date.UTC(y, m, d));
+  const lastDay = (y, m)    => new Date(Date.UTC(y, m + 1, 0)); // day-0 trick: last day of month m
 
   switch (checkinType) {
     case 'per_sprint': {
+      // Sprint keeps interval-based generation (cycle-relative, not calendar-aligned)
       let cur = new Date(start);
       while (cur <= end) {
-        const pEnd = clamp(new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 13));
+        const next = new Date(cur); next.setUTCDate(next.getUTCDate() + 13);
+        const pEnd = next > end ? new Date(end) : next;
         periods.push({ number: num++, label: `Sprint ${num - 1}`, start: fmt(cur), end: fmt(pEnd) });
-        cur = new Date(pEnd); cur.setDate(cur.getDate() + 1);
+        cur = new Date(pEnd); cur.setUTCDate(cur.getUTCDate() + 1);
       }
       break;
     }
     case 'monthly': {
-      let y = start.getFullYear(), m = start.getMonth();
-      const endY = end.getFullYear(), endM = end.getMonth();
+      // Full calendar months — always 1st to last day, no clamping
+      let y = start.getUTCFullYear(), m = start.getUTCMonth();
+      const endY = end.getUTCFullYear(), endM = end.getUTCMonth();
       while (y < endY || (y === endY && m <= endM)) {
-        const pStart = new Date(Math.max(new Date(y, m, 1), start));
-        const pEnd   = clamp(new Date(y, m + 1, 0));          // last day of month
-        const label  = pStart.toLocaleString('en-US', { month: 'long', year: 'numeric' }) + ' Check-In';
+        const pStart = utc(y, m, 1);
+        const pEnd   = lastDay(y, m);
+        const label  = pStart.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }) + ' Check-In';
         periods.push({ number: num++, label, start: fmt(pStart), end: fmt(pEnd) });
         if (++m > 11) { m = 0; y++; }
       }
       break;
     }
     case 'quarterly': {
+      // Calendar quarters: Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
       const QUARTERS = [[0, 2], [3, 5], [6, 8], [9, 11]];
-      for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
+      for (let y = start.getUTCFullYear(); y <= end.getUTCFullYear(); y++) {
         QUARTERS.forEach(([sm, em], qi) => {
-          const pStart = new Date(y, sm, 1);
-          const pEnd   = new Date(y, em + 1, 0);
+          const pStart = utc(y, sm, 1);
+          const pEnd   = lastDay(y, em);
           if (pEnd < start || pStart > end) return;
-          const s = pStart < start ? new Date(start) : pStart;
-          const e = clamp(pEnd);
-          periods.push({ number: num++, label: `Q${qi + 1} ${y} Check-In`, start: fmt(s), end: fmt(e) });
+          periods.push({ number: num++, label: `Q${qi + 1} ${y} Check-In`, start: fmt(pStart), end: fmt(pEnd) });
         });
       }
       break;
     }
     case 'mid_year': {
-      const HALVES = [[0, 5], [6, 11]];
-      for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
-        HALVES.forEach(([sm, em], hi) => {
-          const pStart = new Date(y, sm, 1);
-          const pEnd   = new Date(y, em + 1, 0);
-          if (pEnd < start || pStart > end) return;
-          const s = pStart < start ? new Date(start) : pStart;
-          const e = clamp(pEnd);
-          periods.push({ number: num++, label: `H${hi + 1} ${y} Check-In`, start: fmt(s), end: fmt(e) });
-        });
+      // Fiscal halves: H1 = April 1 – September 30, H2 = October 1 – March 31 (next year)
+      for (let y = start.getUTCFullYear(); y <= end.getUTCFullYear(); y++) {
+        const h1s = utc(y, 3, 1);      // Apr 1
+        const h1e = lastDay(y, 8);     // Sep 30
+        if (h1e >= start && h1s <= end) {
+          periods.push({ number: num++, label: `H1 ${y} Check-In`, start: fmt(h1s), end: fmt(h1e) });
+        }
+        const h2s = utc(y, 9, 1);          // Oct 1
+        const h2e = lastDay(y + 1, 2);     // Mar 31 next year
+        if (h2e >= start && h2s <= end) {
+          periods.push({ number: num++, label: `H2 ${y} Check-In`, start: fmt(h2s), end: fmt(h2e) });
+        }
       }
       break;
     }
     case 'yearly': {
-      for (let y = start.getFullYear(); y <= end.getFullYear(); y++) {
-        const pStart = new Date(y, 0, 1);
-        const pEnd   = new Date(y, 11, 31);
-        if (pEnd < start || pStart > end) return;
-        const s = pStart < start ? new Date(start) : pStart;
-        const e = clamp(pEnd);
-        periods.push({ number: num++, label: `${y} Annual Check-In`, start: fmt(s), end: fmt(e) });
+      // Full calendar years — always Jan 1 to Dec 31
+      for (let y = start.getUTCFullYear(); y <= end.getUTCFullYear(); y++) {
+        const pStart = utc(y, 0, 1);
+        const pEnd   = utc(y, 11, 31);
+        if (pEnd < start || pStart > end) continue;
+        periods.push({ number: num++, label: `${y} Annual Check-In`, start: fmt(pStart), end: fmt(pEnd) });
       }
       break;
     }
@@ -196,6 +203,17 @@ router.put('/:id', async (req, res, next) => {
     }
 
     res.json(cycle);
+  } catch (e) { next(e); }
+});
+
+// POST /api/cycles/:id/regenerate-periods — force-rebuild check-in periods for any cycle
+router.post('/:id/regenerate-periods', async (req, res, next) => {
+  try {
+    const { rows } = await db.query(`SELECT * FROM review_cycles WHERE id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const cycle = rows[0];
+    const count = await generatePeriodsForCycle(cycle.id, cycle.checkin_type, cycle.start_date, cycle.end_date);
+    res.json({ ok: true, periods_generated: count });
   } catch (e) { next(e); }
 });
 

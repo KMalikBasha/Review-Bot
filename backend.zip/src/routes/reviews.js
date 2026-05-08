@@ -12,10 +12,7 @@ router.get('/cycle/:cycleId', async (req, res, next) => {
 
     const { rows } = await db.query(
       `
-      WITH cycle AS (
-        SELECT id FROM review_cycles WHERE id = $1
-      ),
-      emp_resp AS (
+      WITH emp_resp AS (
         SELECT employee_id, COUNT(*) AS answered
         FROM employee_responses
         WHERE review_cycle_id = $1
@@ -26,22 +23,26 @@ router.get('/cycle/:cycleId', async (req, res, next) => {
         FROM employees e
         LEFT JOIN questionnaires q
           ON q.category_id = e.category_id AND q.is_active = TRUE
-        WHERE e.role = 'employee'
         GROUP BY e.id
       )
       SELECT
-        e.id, e.name, e.email,
+        e.id, e.name, e.email, e.role,
         c.name AS category_name,
         m.name AS manager_name,
         d.name AS delivery_head_name,
         COALESCE(er.answered, 0)  AS answered_count,
         COALESCE(tq.total, 0)     AS total_questions,
-        CASE WHEN er.answered IS NOT NULL AND er.answered >= tq.total AND tq.total > 0
-             THEN 'submitted' ELSE 'pending' END AS employee_status,
+        CASE
+          WHEN COALESCE(tq.total, 0) = 0 THEN 'submitted'
+          WHEN er.answered IS NOT NULL AND er.answered >= tq.total THEN 'submitted'
+          ELSE 'pending'
+        END AS employee_status,
         CASE WHEN mf.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS manager_status,
         CASE WHEN dh.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS delivery_head_status,
         CASE WHEN fs.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS hr_status
       FROM employees e
+      -- Only show people explicitly assigned to this cycle
+      JOIN employee_cycle_assignments eca ON eca.employee_id = e.id AND eca.review_cycle_id = $1
       LEFT JOIN employee_categories c    ON c.id = e.category_id
       LEFT JOIN employees m              ON m.id = e.manager_id
       LEFT JOIN employees d              ON d.id = e.delivery_head_id
@@ -50,8 +51,8 @@ router.get('/cycle/:cycleId', async (req, res, next) => {
       LEFT JOIN manager_feedback      mf ON mf.employee_id = e.id AND mf.review_cycle_id = $1
       LEFT JOIN delivery_head_reviews dh ON dh.employee_id = e.id AND dh.review_cycle_id = $1
       LEFT JOIN final_summaries       fs ON fs.employee_id = e.id AND fs.review_cycle_id = $1
-      WHERE e.role = 'employee' AND e.is_active = TRUE
-      ORDER BY e.id
+      WHERE e.is_active = TRUE
+      ORDER BY e.role, e.name
       `,
       [cycleId]
     );

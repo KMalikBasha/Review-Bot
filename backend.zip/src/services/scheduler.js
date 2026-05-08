@@ -13,48 +13,70 @@ async function sendTo(user, message) {
   return { ok: false, reason: 'no_messaging_id' };
 }
 
-// ── Non-manager nudge (employee / delivery_head / HR) ─────────────────────
-function nudgeMessage(stage, cycleName, employeeName) {
-  const text = (() => {
-    switch (stage) {
-      case 'employee':
-        return `Reminder -- please complete your appraisal questionnaire for *${cycleName}*.`;
-      case 'delivery_head':
-        return `Reminder -- the manager feedback for *${employeeName}* (${cycleName}) is ready for your review.`;
-      case 'hr':
-        return `Reminder -- *${employeeName}* is ready for your final summary in *${cycleName}*.`;
-      default:
-        return `Reminder -- you have a pending action in ${cycleName}.`;
-    }
-  })();
+// ── Employee self-review nudge card ──────────────────────────────────────
+function nudgeMessage(empRow, cycle) {
+  const employeeName = empRow.name;
+  const categoryName = empRow.category_name || '—';
+  const cycleName    = cycle.name;
+  const endDate      = cycle.end_date;
+
+  const fmtDate    = (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const dueLabel   = endDate ? fmtDate(endDate) : null;
+  const subtitleMd = dueLabel
+    ? `Please complete the review by *${dueLabel}*`
+    : `Please complete your appraisal for *${cycleName}*`;
+  const fallback = `Reminder: please complete your appraisal questionnaire for ${cycleName}.`;
 
   return {
-    text,
+    text: fallback,
     blocks: [
-      { type: 'section', text: { type: 'mrkdwn', text } },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*New appraisal review request for you*\n${subtitleMd}` },
+      },
+      { type: 'divider' },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*EMPLOYEE*\n${employeeName}` },
+          { type: 'mrkdwn', text: `*DEPARTMENT*\n${categoryName}` },
+          { type: 'mrkdwn', text: `*REVIEW CYCLE*\n${cycleName}` },
+          { type: 'mrkdwn', text: `*DUE DATE*\n${dueLabel || 'TBD'}` },
+        ],
+      },
+      { type: 'divider' },
       {
         type: 'actions',
         elements: [
           {
             type: 'button',
-            text: { type: 'plain_text', text: 'Start' },
+            text: { type: 'plain_text', text: 'Start Review', emoji: true },
             style: 'primary',
             action_id: 'start_appraisal',
+          },
+          {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Remind Later', emoji: true },
+            action_id: 'remind_later',
           },
         ],
       },
     ],
+    attachments: [{ color: '#36C5B3' }],
   };
 }
 
-// ── Manager digest card ───────────────────────────────────────────────────
-function managerDigestMessage(cycleName, allEmployees, endDate) {
+// ── Generic digest card (manager / delivery head / HR) ───────────────────
+//   cfg.reviewedField  — status field that = 'submitted' means this reviewer is done
+//   cfg.prereqField    — status field that = 'submitted' means the prior stage is done
+//   cfg.roleLabel      — optional subtitle appended to the cycle name in the header
+function buildDigestMessage({ reviewedField, prereqField, roleLabel }, cycleName, allEmployees, endDate) {
   const total      = allEmployees.length;
-  const reviewed   = allEmployees.filter(e => e.manager_status === 'submitted').length;
+  const reviewed   = allEmployees.filter(e => e[reviewedField] === 'submitted').length;
   const pending    = allEmployees.filter(
-    e => e.employee_status === 'submitted' && e.manager_status !== 'submitted'
+    e => e[prereqField] === 'submitted' && e[reviewedField] !== 'submitted'
   ).length;
-  const notStarted = allEmployees.filter(e => e.employee_status !== 'submitted').length;
+  const notStarted = allEmployees.filter(e => e[prereqField] !== 'submitted').length;
   const percent    = total > 0 ? Math.round((reviewed / total) * 100) : 0;
 
   const daysLeft = endDate ? Math.ceil((new Date(endDate) - Date.now()) / 86400000) : null;
@@ -63,67 +85,64 @@ function managerDigestMessage(cycleName, allEmployees, endDate) {
     : daysLeft === 0 ? 'Due today'
     : `${Math.abs(daysLeft)} day${Math.abs(daysLeft) !== 1 ? 's' : ''} overdue`;
 
-  const fallback = `Review digest for ${cycleName}: ${pending} pending, ${reviewed}/${total} reviewed.`;
+  const headerText = roleLabel ? `📋  ${cycleName}  ·  ${roleLabel}` : `📋  ${cycleName}`;
+  const fallback = `${roleLabel || 'Review'} digest for ${cycleName}: ${pending} pending, ${reviewed}/${total} reviewed.`;
 
   // ── Slack Block Kit ──────────────────────────────────────────────────────
-  const filled = Math.round((percent / 100) * 10);
-  const bar    = ':large_purple_square:'.repeat(filled) + ':white_large_square:'.repeat(10 - filled);
+  const slackEmployeeBlocks = allEmployees.flatMap((emp, i) => {
+    const isDone    = emp[reviewedField] === 'submitted';
+    const isPending = !isDone && emp[prereqField] === 'submitted';
+    const statusText = isDone ? '~Reviewed~'
+      : isPending ? 'Awaiting your review'
+      : '_Not started yet_';
 
-  const slackEmployeeBlocks = allEmployees.map((emp) => {
-    const isDone    = emp.manager_status === 'submitted';
-    const isPending = !isDone && emp.employee_status === 'submitted';
-    const icon  = isDone ? ':white_check_mark:' : isPending ? ':hourglass_flowing_sand:' : ':red_circle:';
-    const label = isDone ? '~Reviewed~' : isPending ? '*Awaiting your review*' : '_Not started yet_';
-    const block = { type: 'section', text: { type: 'mrkdwn', text: `${icon}  *${emp.name}*    ${label}` } };
+    const row = {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*${emp.name}*\n${statusText}` },
+    };
     if (isPending) {
-      block.accessory = {
+      row.accessory = {
         type: 'button',
         text: { type: 'plain_text', text: 'Review', emoji: true },
-        style: 'primary', action_id: 'start_appraisal',
+        style: 'primary',
+        action_id: 'start_appraisal',
       };
     }
-    return block;
+    const blocks = [row];
+    if (i < allEmployees.length - 1) blocks.push({ type: 'divider' });
+    return blocks;
   });
 
-  const slackBlocks = [
-    { type: 'header', text: { type: 'plain_text', text: `📋  ${cycleName}`, emoji: true } },
+  const slackCardBlocks = [
+    // Title row + Start reviews button
     {
       type: 'section',
-      fields: [
-        { type: 'mrkdwn', text: daysLabel ? `:clock1:  *${daysLabel}*` : `:calendar:  *Appraisal in progress*` },
-        { type: 'mrkdwn', text: `:bell:  *${pending} teammate${pending !== 1 ? 's' : ''} need${pending === 1 ? 's' : ''} a nudge*` },
-      ],
+      text: { type: 'mrkdwn', text: `*${headerText}*` },
       accessory: {
         type: 'button',
-        text: { type: 'plain_text', text: 'Start Reviews', emoji: true },
-        style: 'primary', action_id: 'start_appraisal',
+        text: { type: 'plain_text', text: 'Start reviews', emoji: true },
+        style: 'primary',
+        action_id: 'start_appraisal',
       },
     },
-    { type: 'divider' },
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `*Overall Progress*\n${bar}  *${percent}%*` },
-    },
+    // Stats row
     {
       type: 'context',
       elements: [
-        { type: 'mrkdwn', text: `:white_check_mark: *${reviewed} reviewed*   :hourglass_flowing_sand: *${pending} pending*   :red_circle: *${notStarted} not started*` },
+        { type: 'mrkdwn', text: daysLabel ? `:clock1: ${daysLabel}` : ':calendar: Appraisal in progress' },
+        { type: 'mrkdwn', text: `:warning: *${pending} teammate${pending !== 1 ? 's' : ''} need${pending === 1 ? 's' : ''} a nudge*` },
       ],
     },
     { type: 'divider' },
-    { type: 'section', text: { type: 'mrkdwn', text: '*👥  Team Status*' } },
+    // Team Status label (renders small/gray as a context block)
+    { type: 'context', elements: [{ type: 'mrkdwn', text: '*TEAM STATUS*' }] },
     ...slackEmployeeBlocks,
-    { type: 'divider' },
-    {
-      type: 'context',
-      elements: [{ type: 'mrkdwn', text: `_Tap *Review* next to an employee or *Start Reviews* to begin._` }],
-    },
   ];
 
   // ── Teams Adaptive Card ──────────────────────────────────────────────────
   const teamsEmployeeRows = allEmployees.map((emp) => {
-    const isDone    = emp.manager_status === 'submitted';
-    const isPending = !isDone && emp.employee_status === 'submitted';
+    const isDone    = emp[reviewedField] === 'submitted';
+    const isPending = !isDone && emp[prereqField] === 'submitted';
     const statusText  = isDone ? '✅ Reviewed' : isPending ? '⏳ Awaiting review' : '🔴 Not started';
     const statusColor = isDone ? 'good' : isPending ? 'warning' : 'attention';
 
@@ -173,7 +192,7 @@ function managerDigestMessage(cycleName, allEmployees, endDate) {
               {
                 type: 'Column', width: 'stretch',
                 items: [
-                  { type: 'TextBlock', text: `📋 ${cycleName}`, weight: 'bolder', size: 'medium', color: 'light' },
+                  { type: 'TextBlock', text: headerText, weight: 'bolder', size: 'medium', color: 'light' },
                   ...(daysLabel ? [{ type: 'TextBlock', text: `⏰ ${daysLabel}`, size: 'small', color: 'light', spacing: 'none', isSubtle: true }] : []),
                 ],
               },
@@ -195,7 +214,6 @@ function managerDigestMessage(cycleName, allEmployees, endDate) {
                 { type: 'Column', width: 'auto',    items: [{ type: 'TextBlock', text: `**${percent}%**`,      weight: 'bolder', color: 'accent', size: 'small' }] },
               ],
             },
-            // Progress bar via two-column containers
             {
               type: 'ColumnSet', spacing: 'small',
               columns: [
@@ -232,10 +250,12 @@ function managerDigestMessage(cycleName, allEmployees, endDate) {
     },
   };
 
-  // Wrap Slack blocks in an attachment so Slack renders a bordered card
-  const slackAttachments = [{ color: '#5C3EE8', blocks: slackBlocks }];
-
-  return { text: fallback, attachments: slackAttachments, card: teamsCard };
+  // Single attachment renders as a card with borders on all four sides in Slack
+  return {
+    text: fallback,
+    attachments: [{ color: '#36C5B3', blocks: slackCardBlocks }],
+    card: teamsCard,
+  };
 }
 
 async function wasRecentlyNudged(cycleId, employeeId, stage, intervalDays) {
@@ -261,100 +281,131 @@ async function logNudge(cycleId, employeeId, stage, result) {
 
 // ── Send ONE digest card per manager ──────────────────────────────────────
 async function sendManagerDigests(cycle, emps) {
-  const intervalDays = cycle.manager_notify_interval_days;
-
-  // Group ALL employees by their manager
+  // Group all employees by their manager
   const managerMap = new Map();
   for (const emp of emps) {
     const mgrKey = emp.manager_slack_id || emp.manager_teams_id;
     if (!mgrKey) continue;
     if (!managerMap.has(mgrKey)) {
-      managerMap.set(mgrKey, {
-        slack_id: emp.manager_slack_id,
-        teams_id: emp.manager_teams_id,
-        employees: [],
-      });
+      managerMap.set(mgrKey, { slack_id: emp.manager_slack_id, teams_id: emp.manager_teams_id, employees: [] });
     }
     managerMap.get(mgrKey).employees.push(emp);
   }
 
   for (const [, mgr] of managerMap) {
-    const pendingEmployees = mgr.employees.filter(
+    const dueEmployees = mgr.employees.filter(
       e => e.employee_status === 'submitted' && e.manager_status !== 'submitted'
     );
-    if (!pendingEmployees.length) continue;
+    if (!dueEmployees.length) continue;
 
-    const dueEmployees = pendingEmployees;
-
-    // Send ONE card showing all employees under this manager
     const target = { slack_user_id: mgr.slack_id, teams_user_id: mgr.teams_id };
-    const result = await sendTo(target, managerDigestMessage(cycle.name, mgr.employees, cycle.end_date));
-
-    // Log a nudge entry for each employee that was due
-    for (const emp of dueEmployees) {
-      await logNudge(cycle.id, emp.id, 'manager', result);
-    }
-
+    const card   = buildDigestMessage(
+      { reviewedField: 'manager_status', prereqField: 'employee_status', roleLabel: 'Manager Review' },
+      cycle.name, mgr.employees, cycle.end_date
+    );
+    const result = await sendTo(target, card);
+    for (const emp of dueEmployees) await logNudge(cycle.id, emp.id, 'manager', result);
     console.log(`[nudge] manager digest sent (${dueEmployees.length} due) -> ${mgr.slack_id || mgr.teams_id}`);
   }
 }
 
-// ── Per-employee stages: employee / delivery_head / HR ────────────────────
-async function processEmployeeForCycle(cycle, empRow, sentThisPass = new Set()) {
-  const {
-    id: cycleId, name: cycleName,
-    employee_notify_interval_days:      empInt,
-    delivery_head_notify_interval_days: dhInt,
-  } = cycle;
+// ── Send ONE digest card per delivery head ────────────────────────────────
+async function sendDHDigests(cycle, emps) {
+  const intervalDays = cycle.delivery_head_notify_interval_days;
 
-  const key = (target) => target.slack_user_id || target.teams_user_id || null;
-
-  // Stage 1: employee self-review
-  if (empRow.employee_status !== 'submitted') {
-    const target = { slack_user_id: empRow.slack_user_id, teams_user_id: empRow.teams_user_id };
-    const k = key(target);
-    if (!k) return;
-    if (sentThisPass.has(k)) return;
-    if (await wasRecentlyNudged(cycleId, empRow.id, 'employee', empInt)) return;
-    const result = await sendTo(target, nudgeMessage('employee', cycleName, empRow.name));
-    await logNudge(cycleId, empRow.id, 'employee', result);
-    if (result.ok) sentThisPass.add(k);
-    return;
+  // Group employees by their delivery head
+  const dhMap = new Map();
+  for (const emp of emps) {
+    const dhKey = emp.delivery_head_slack_id || emp.delivery_head_teams_id;
+    if (!dhKey) continue;
+    if (!dhMap.has(dhKey)) {
+      dhMap.set(dhKey, { slack_id: emp.delivery_head_slack_id, teams_id: emp.delivery_head_teams_id, employees: [] });
+    }
+    dhMap.get(dhKey).employees.push(emp);
   }
 
-  // Stage 2: manager -- handled by sendManagerDigests, skip here
-  if (empRow.manager_status !== 'submitted') return;
-
-  // Stage 3: delivery head
-  if (empRow.delivery_head_status !== 'submitted') {
-    const target = { slack_user_id: empRow.delivery_head_slack_id, teams_user_id: empRow.delivery_head_teams_id };
-    const k = key(target);
-    if (!k) return;
-    if (sentThisPass.has(k)) return;
-    if (await wasRecentlyNudged(cycleId, empRow.id, 'delivery_head', dhInt)) return;
-    const result = await sendTo(target, nudgeMessage('delivery_head', cycleName, empRow.name));
-    await logNudge(cycleId, empRow.id, 'delivery_head', result);
-    if (result.ok) sentThisPass.add(k);
-    return;
-  }
-
-  // Stage 4: HR
-  if (empRow.hr_status !== 'submitted') {
-    const { rows: hrRows } = await db.query(
-      `SELECT id, teams_user_id, slack_user_id FROM employees
-        WHERE role = 'hr' AND is_active = TRUE
-          AND (teams_user_id IS NOT NULL OR slack_user_id IS NOT NULL)
-        LIMIT 1`
+  for (const [, dh] of dhMap) {
+    // Filter to employees whose manager review is done but DH review is not
+    const pendingEmployees = dh.employees.filter(
+      e => e.manager_status === 'submitted' && e.delivery_head_status !== 'submitted'
     );
-    if (!hrRows.length) return;
-    const target = hrRows[0];
-    const k = key(target);
-    if (sentThisPass.has(k)) return;
-    if (await wasRecentlyNudged(cycleId, empRow.id, 'hr', cycle.manager_notify_interval_days)) return;
-    const result = await sendTo(target, nudgeMessage('hr', cycleName, empRow.name));
-    await logNudge(cycleId, empRow.id, 'hr', result);
-    if (result.ok) sentThisPass.add(k);
+    if (!pendingEmployees.length) continue;
+
+    // Skip employees recently nudged (check first pending as representative)
+    const dueEmployees = [];
+    for (const emp of pendingEmployees) {
+      if (!(await wasRecentlyNudged(cycle.id, emp.id, 'delivery_head', intervalDays))) {
+        dueEmployees.push(emp);
+      }
+    }
+    if (!dueEmployees.length) continue;
+
+    const target = { slack_user_id: dh.slack_id, teams_user_id: dh.teams_id };
+    const card   = buildDigestMessage(
+      { reviewedField: 'delivery_head_status', prereqField: 'manager_status', roleLabel: 'Delivery Head Review' },
+      cycle.name, dh.employees, cycle.end_date
+    );
+    const result = await sendTo(target, card);
+    for (const emp of dueEmployees) await logNudge(cycle.id, emp.id, 'delivery_head', result);
+    console.log(`[nudge] DH digest sent (${dueEmployees.length} due) -> ${dh.slack_id || dh.teams_id}`);
   }
+}
+
+// ── Send ONE digest card per HR employee ──────────────────────────────────
+async function sendHRDigests(cycle, emps) {
+  const intervalDays = cycle.manager_notify_interval_days; // reuse manager interval for HR
+
+  // Employees ready for HR final summary
+  const pendingEmployees = emps.filter(
+    e => e.delivery_head_status === 'submitted' && e.hr_status !== 'submitted'
+  );
+  if (!pendingEmployees.length) return;
+
+  // Find all active HR employees
+  const { rows: hrUsers } = await db.query(
+    `SELECT id, slack_user_id, teams_user_id FROM employees
+      WHERE role = 'hr' AND is_active = TRUE
+        AND (slack_user_id IS NOT NULL OR teams_user_id IS NOT NULL)`
+  );
+  if (!hrUsers.length) return;
+
+  // Build the card once — it shows the full team list for context
+  const card = buildDigestMessage(
+    { reviewedField: 'hr_status', prereqField: 'delivery_head_status', roleLabel: 'HR Final Summary' },
+    cycle.name, emps, cycle.end_date
+  );
+
+  for (const hr of hrUsers) {
+    // Skip employees recently nudged for this HR user
+    const dueEmployees = [];
+    for (const emp of pendingEmployees) {
+      if (!(await wasRecentlyNudged(cycle.id, emp.id, 'hr', intervalDays))) {
+        dueEmployees.push(emp);
+      }
+    }
+    if (!dueEmployees.length) continue;
+
+    const target = { slack_user_id: hr.slack_user_id, teams_user_id: hr.teams_user_id };
+    const result = await sendTo(target, card);
+    for (const emp of dueEmployees) await logNudge(cycle.id, emp.id, 'hr', result);
+    console.log(`[nudge] HR digest sent (${dueEmployees.length} due) -> ${hr.slack_user_id || hr.teams_user_id}`);
+  }
+}
+
+// ── Per-employee stage 1: self-review nudge ───────────────────────────────
+// Stages 2 (manager), 3 (DH), and 4 (HR) are handled by their digest functions.
+async function processEmployeeForCycle(cycle, empRow, sentThisPass = new Set()) {
+  if (empRow.employee_status === 'submitted') return;
+
+  const target = { slack_user_id: empRow.slack_user_id, teams_user_id: empRow.teams_user_id };
+  const k = target.slack_user_id || target.teams_user_id;
+  if (!k) return;
+  if (sentThisPass.has(k)) return;
+  if (await wasRecentlyNudged(cycle.id, empRow.id, 'employee', cycle.employee_notify_interval_days)) return;
+
+  const result = await sendTo(target, nudgeMessage(empRow, cycle));
+  await logNudge(cycle.id, empRow.id, 'employee', result);
+  if (result.ok) sentThisPass.add(k);
 }
 
 // ── Sync check-in period statuses (upcoming → active → closed) ───────────────
@@ -514,7 +565,7 @@ async function nudgeForActivePeriod(cycle, emp, sentThisPass) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `It's time for your *${period.period_label}* check-in for *${cycle.name}*.\nDeadline: *${period.period_end}*`,
+          text: `It's time for your *${period.period_label}* check-in for *${cycle.name}*.\nDeadline: *${new Date(period.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}*`,
         },
         accessory: {
           type: 'button',
@@ -551,10 +602,8 @@ async function runNudges() {
     );
     if (!cycles.length) { console.log('[nudge] no active cycles'); return; }
 
-    // Separate dedup sets so a check-in nudge doesn't block a self-review/DH/HR nudge
-    // (different types of reminders should each get their own dedup pass)
-    const sentCheckinThisPass    = new Set();
-    const sentAppraisalThisPass  = new Set();
+    // Single dedup set — appraisal nudge takes priority; if one is sent, check-in is skipped for that user this pass
+    const sentThisPass = new Set();
 
     for (const cycle of cycles) {
       const { rows: emps } = await db.query(
@@ -570,18 +619,21 @@ async function runNudges() {
           FROM employees e
           LEFT JOIN questionnaires q
             ON q.category_id = e.category_id AND q.is_active = TRUE
-          WHERE e.role = 'employee'
           GROUP BY e.id
         )
         SELECT
           e.id, e.name,
           e.teams_user_id, e.slack_user_id,
+          c.name AS category_name,
           m.teams_user_id AS manager_teams_id,
           m.slack_user_id AS manager_slack_id,
           d.teams_user_id AS delivery_head_teams_id,
           d.slack_user_id AS delivery_head_slack_id,
-          CASE WHEN er.answered IS NOT NULL AND er.answered >= tq.total AND tq.total > 0
-               THEN 'submitted' ELSE 'pending' END AS employee_status,
+          CASE
+            WHEN COALESCE(tq.total, 0) = 0 THEN 'submitted'
+            WHEN er.answered IS NOT NULL AND er.answered >= tq.total THEN 'submitted'
+            ELSE 'pending'
+          END AS employee_status,
           CASE WHEN mf.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS manager_status,
           CASE WHEN dh.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS delivery_head_status,
           CASE WHEN fs.id IS NOT NULL THEN 'submitted' ELSE 'pending' END AS hr_status
@@ -596,24 +648,27 @@ async function runNudges() {
         LEFT JOIN manager_feedback      mf ON mf.employee_id = e.id AND mf.review_cycle_id = $1
         LEFT JOIN delivery_head_reviews dh ON dh.employee_id = e.id AND dh.review_cycle_id = $1
         LEFT JOIN final_summaries       fs ON fs.employee_id = e.id AND fs.review_cycle_id = $1
+        LEFT JOIN employee_categories   c  ON c.id = e.category_id
         WHERE e.is_active = TRUE
         `,
         [cycle.id]
       );
 
-      // Nudge employees for active check-in period (own dedup set)
+      // Appraisal self-review nudges run first so they take priority
       for (const emp of emps) {
-        try { await nudgeForActivePeriod(cycle, emp, sentCheckinThisPass); }
-        catch (err) { console.error(`[nudge] checkin period nudge failed emp ${emp.id}`, err); }
+        try { await processEmployeeForCycle(cycle, emp, sentThisPass); }
+        catch (err) { console.error(`[nudge] employee ${emp.id} failed`, err); }
       }
 
-      // ONE digest card per manager
+      // ONE digest card per manager / DH / HR
       await sendManagerDigests(cycle, emps);
+      await sendDHDigests(cycle, emps);
+      await sendHRDigests(cycle, emps);
 
-      // Individual nudges for employee / DH / HR stages (own dedup set)
+      // Check-in nudges — skipped for users who already received an appraisal nudge this pass
       for (const emp of emps) {
-        try { await processEmployeeForCycle(cycle, emp, sentAppraisalThisPass); }
-        catch (err) { console.error(`[nudge] employee ${emp.id} failed`, err); }
+        try { await nudgeForActivePeriod(cycle, emp, sentThisPass); }
+        catch (err) { console.error(`[nudge] checkin period nudge failed emp ${emp.id}`, err); }
       }
     }
   } catch (err) {

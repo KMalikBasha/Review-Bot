@@ -46,6 +46,7 @@ async function sendSlackProactiveMessage(slackUserId, payload) {
       if (payload.text)        msg.text        = payload.text;
       if (payload.blocks)      msg.blocks      = payload.blocks;
       if (payload.attachments) msg.attachments = payload.attachments;
+      // blocks + attachments can coexist (blocks for interactivity, attachments for color stripe)
     }
 
     await client.chat.postMessage(msg);

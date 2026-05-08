@@ -168,15 +168,28 @@ slackApp.message(async ({ message, say, client, context }) => {
 });
 
 /**
- * Handle the "Start" button click from a nudge.
- * Acks immediately, then runs the same flow as a `start` command would.
+ * Handle the "Start" / "Review" button click from any nudge or digest card.
+ * Acks immediately, then drives the flow for the clicking user.
  */
 slackApp.action('start_appraisal', async ({ ack, body, client }) => {
   await ack();
 
   const slackUserId = body.user?.id;
-  const channelId   = body.channel?.id;
-  if (!slackUserId || !channelId) return;
+  if (!slackUserId) return;
+
+  // body.channel may be absent in some Bolt v3 payloads — fall back to cached DM channel
+  let channelId = body.channel?.id ?? body.container?.channel_id;
+  if (!channelId) {
+    const cached = await db.query(
+      `SELECT channel_id FROM slack_conversation_refs WHERE slack_user_id = $1`,
+      [slackUserId]
+    );
+    channelId = cached.rows[0]?.channel_id;
+  }
+  if (!channelId) {
+    console.error('[slack] start_appraisal: no channel id for user', slackUserId);
+    return;
+  }
 
   const user = await pickActiveRole(slackUserId);
   if (!user) {
@@ -203,6 +216,15 @@ slackApp.action('start_appraisal', async ({ ack, body, client }) => {
       }
     }
   }
+});
+
+// Acknowledge decorative buttons — no further action needed
+slackApp.action('view_profile', async ({ ack }) => { await ack(); });
+slackApp.action('remind_later', async ({ ack }) => { await ack(); });
+
+// Global error handler — logs action/event errors that would otherwise be silent
+slackApp.error(async (error) => {
+  console.error('[slack] Unhandled Bolt error:', error.message, error.original?.message);
 });
 
 // Cache DM channel when the user opens the bot's Home tab
