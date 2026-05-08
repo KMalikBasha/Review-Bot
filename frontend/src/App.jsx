@@ -3,11 +3,12 @@ import {
   AppBar, Toolbar, Typography, Drawer, List, ListItemButton,
   ListItemIcon, ListItemText, Box, Container,
 } from '@mui/material';
-import CategoryIcon from '@mui/icons-material/Category';
-import QuizIcon from '@mui/icons-material/Quiz';
-import PeopleIcon from '@mui/icons-material/People';
-import EventNoteIcon from '@mui/icons-material/EventNote';
-import AssessmentIcon from '@mui/icons-material/Assessment';
+import CategoryIcon   from '@mui/icons-material/Category';
+import QuizIcon        from '@mui/icons-material/Quiz';
+import PeopleIcon      from '@mui/icons-material/People';
+import EventNoteIcon   from '@mui/icons-material/EventNote';
+import AssessmentIcon  from '@mui/icons-material/Assessment';
+import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 
 import CategoriesPage        from './pages/CategoriesPage.jsx';
 import QuestionnairesPage    from './pages/QuestionnairesPage.jsx';
@@ -15,15 +16,17 @@ import EmployeesPage         from './pages/EmployeesPage.jsx';
 import CyclesPage            from './pages/CyclesPage.jsx';
 import ReviewsPage           from './pages/ReviewsPage.jsx';
 import ReviewDetailPage      from './pages/ReviewDetailPage.jsx';
+import GoalTemplatesPage     from './pages/GoalTemplatesPage.jsx';
 
 const DRAWER_WIDTH = 220;
 
 const navItems = [
-  { path: '/categories',     label: 'Categories',     icon: <CategoryIcon /> },
-  { path: '/questionnaires', label: 'Questionnaires', icon: <QuizIcon /> },
-  { path: '/employees',      label: 'Employees',      icon: <PeopleIcon /> },
-  { path: '/cycles',         label: 'Review Cycles',  icon: <EventNoteIcon /> },
-  { path: '/reviews',        label: 'Reviews',        icon: <AssessmentIcon /> },
+  { path: '/categories',      label: 'Categories',      icon: <CategoryIcon /> },
+  { path: '/questionnaires',  label: 'Questionnaires',  icon: <QuizIcon /> },
+  { path: '/employees',       label: 'Employees',       icon: <PeopleIcon /> },
+  { path: '/cycles',          label: 'Review Cycles',   icon: <EventNoteIcon /> },
+  { path: '/reviews',         label: 'Reviews',         icon: <AssessmentIcon /> },
+  { path: '/goal-templates',  label: 'Goal Templates',  icon: <TrackChangesIcon /> },
 ];
 
 export default function App() {
@@ -69,8 +72,9 @@ export default function App() {
             <Route path="/questionnaires" element={<QuestionnairesPage />} />
             <Route path="/employees"      element={<EmployeesPage />} />
             <Route path="/cycles"         element={<CyclesPage />} />
-            <Route path="/reviews"        element={<ReviewsPage />} />
+            <Route path="/reviews"         element={<ReviewsPage />} />
             <Route path="/reviews/cycle/:cycleId/employee/:employeeId" element={<ReviewDetailPage />} />
+            <Route path="/goal-templates"  element={<GoalTemplatesPage />} />
           </Routes>
         </Container>
       </Box>

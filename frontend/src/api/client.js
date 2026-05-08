@@ -44,4 +44,20 @@ export const api = {
   listActiveAssignments: ()        => client.get('/assignments/active').then(r => r.data),
   createAssignment:      (payload) => client.post('/assignments', payload).then(r => r.data),
   deleteAssignment:      (id)      => client.delete(`/assignments/${id}`).then(r => r.data),
+
+  // Goal templates (HR admin)
+  listGoalTemplateRoles: ()               => client.get('/goal-templates/roles').then(r => r.data),
+  listGoalTemplates:     (params = {})    => client.get('/goal-templates', { params }).then(r => r.data),
+  createGoalTemplate:    (payload)        => client.post('/goal-templates', payload).then(r => r.data),
+  updateGoalTemplate:    (id, payload)    => client.put(`/goal-templates/${id}`, payload).then(r => r.data),
+  deleteGoalTemplate:    (id)             => client.delete(`/goal-templates/${id}`).then(r => r.data),
+
+  // Employee goals
+  getGoalsByCycleEmployee:  (cycleId, empId) => client.get(`/goals/cycle/${cycleId}/employee/${empId}`).then(r => r.data),
+  getGoalsByCycle:          (cycleId)        => client.get(`/goals/cycle/${cycleId}`).then(r => r.data),
+  saveGoals:                (cycleId, empId, goals) => client.post(`/goals/cycle/${cycleId}/employee/${empId}`, { goals }).then(r => r.data),
+  submitGoals:              (cycleId, empId) => client.post(`/goals/cycle/${cycleId}/employee/${empId}/submit`).then(r => r.data),
+  managerReviewGoals:       (cycleId, empId, payload) => client.put(`/goals/cycle/${cycleId}/employee/${empId}/manager-review`, payload).then(r => r.data),
+  hrLockGoals:              (cycleId, empId, payload) => client.put(`/goals/cycle/${cycleId}/employee/${empId}/hr-lock`, payload).then(r => r.data),
+  getGoalApprovalLog:       (cycleId, empId) => client.get(`/goals/cycle/${cycleId}/employee/${empId}/log`).then(r => r.data),
 };

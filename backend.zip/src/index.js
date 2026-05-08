@@ -11,6 +11,8 @@ const reviewsRouter        = require('./routes/reviews');
 const checkinsRouter       = require('./routes/checkins');
 const quarterlyRouter      = require('./routes/quarterly');
 const assignmentsRouter    = require('./routes/assignments');
+const goalTemplatesRouter  = require('./routes/goalTemplates');
+const goalsRouter          = require('./routes/goals');
 
 // Teams bot
 const { adapter } = require('./bot/adapter');
@@ -50,6 +52,8 @@ app.use('/api/reviews',        reviewsRouter);
 app.use('/api/checkins',       checkinsRouter);
 app.use('/api/quarterly',      quarterlyRouter);
 app.use('/api/assignments',    assignmentsRouter);
+app.use('/api/goal-templates', goalTemplatesRouter);
+app.use('/api/goals',          goalsRouter);
 
 // --- Teams bot endpoint ---
 app.post('/api/messages', (req, res) => {
